@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output (if using a bundler like webpack/vite)
+dist/
+build/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Package manager locks (optional, some prefer to keep these)
+# package-lock.json
+# yarn.lock
+
+# Chrome extension specific
+*.pem        # Private key used to sign the extension
+*.crx        # Packaged extension file
+*.zip        # Distribution zips

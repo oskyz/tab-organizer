@@ -1,0 +1,6 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Safari extension sibling folder
+safari-tab-organizer-extension/

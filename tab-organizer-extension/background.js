@@ -4,6 +4,10 @@ const SETTINGS_KEY = "settings";
 const ACTIVITY_KEY = "tabActivity";
 const LAST_ACTION_KEY = "lastAction";
 const BOOKMARK_PREFS_KEY = "bookmarkPrefs";
+const TIME_TRACKING_KEY = "timeTracking";
+
+const HEARTBEAT_ALARM = "timeTrackingHeartbeat";
+const HEARTBEAT_PERIOD_MINUTES = 0.5;
 
 const DEFAULT_SETTINGS = {
   includePinnedTabs: false,
@@ -135,6 +139,78 @@ async function getAllTabs() {
   return tabs.filter((tab) => !isIncognitoTab(tab));
 }
 
+function todayStamp() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+async function tickActiveTab(tabId) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (_err) {
+    return;
+  }
+  if (!tab || isIncognitoTab(tab)) {
+    return;
+  }
+  const ctx = contextForTab(tab);
+  if (!ctx || ctx.key === "unknown|general") {
+    return;
+  }
+
+  const now = Date.now();
+  const data = await storageGet([TIME_TRACKING_KEY]);
+  const store = data[TIME_TRACKING_KEY] || {};
+  const entry = store[ctx.key] || {
+    label: ctx.label,
+    totalMs: 0,
+    dailyMs: 0,
+    dayStamp: todayStamp(),
+    lastTick: now
+  };
+
+  const today = todayStamp();
+  if (entry.dayStamp !== today) {
+    entry.dailyMs = 0;
+    entry.dayStamp = today;
+  }
+
+  const elapsed = now - (entry.lastTick || now);
+  const MAX_TICK_MS = 5 * 60 * 1000;
+  if (elapsed > 0 && elapsed <= MAX_TICK_MS) {
+    entry.totalMs += elapsed;
+    entry.dailyMs += elapsed;
+  }
+  entry.label = ctx.label;
+  entry.lastTick = now;
+
+  store[ctx.key] = entry;
+  await storageSet({ [TIME_TRACKING_KEY]: store });
+}
+
+async function getActiveTabId() {
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return activeTab ? activeTab.id : null;
+}
+
+async function getTimeReport() {
+  const data = await storageGet([TIME_TRACKING_KEY]);
+  const store = data[TIME_TRACKING_KEY] || {};
+  const today = todayStamp();
+  return Object.entries(store)
+    .map(([key, entry]) => ({
+      key,
+      label: entry.label || key,
+      totalMs: entry.totalMs || 0,
+      dailyMs: entry.dayStamp === today ? (entry.dailyMs || 0) : 0
+    }))
+    .sort((a, b) => b.totalMs - a.totalMs);
+}
+
 async function cleanupActivity(retentionDays) {
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   const data = await storageGet([ACTIVITY_KEY]);
@@ -213,10 +289,14 @@ async function buildDuplicatePlan(tabs, includePinnedTabs) {
     const keep = sorted[0];
     const close = sorted.slice(1);
 
+    const crossWindow = close.some((tab) => tab.windowId !== keep.windowId);
+
     duplicates.push({
       normalizedUrl: normalized,
       keepTabId: keep.id,
+      keepWindowId: keep.windowId,
       keepTitle: keep.title || keep.url || normalized,
+      crossWindow,
       closeTabIds: close.map((tab) => tab.id),
       closeTabs: close.map((tab) => ({
         id: tab.id,
@@ -445,6 +525,9 @@ async function buildOverview() {
     summary: {
       openTabs: tabs.length,
       duplicateTabCount: duplicates.reduce((acc, group) => acc + group.closeTabIds.length, 0),
+      crossWindowDuplicateCount: duplicates
+        .filter((group) => group.crossWindow)
+        .reduce((acc, group) => acc + group.closeTabIds.length, 0),
       proposedGroups: groups.length,
       bookmarkSuggestions: bookmarkSuggestions.length,
       lowUseRecommendations: lowUseRecommendations.length
@@ -527,6 +610,32 @@ async function organizeNow() {
   return {
     closed: closeTabs.length,
     grouped: groups.length
+  };
+}
+
+async function closeCrossWindowDuplicates() {
+  const settings = await getSettings();
+  const tabs = await getAllTabs();
+  const duplicates = await buildDuplicatePlan(tabs, settings.includePinnedTabs);
+  const crossWindowGroups = duplicates.filter((group) => group.crossWindow);
+  const closeTabs = crossWindowGroups.flatMap((group) => group.closeTabs);
+
+  if (closeTabs.length) {
+    const ids = closeTabs.map((tab) => tab.id);
+    await chrome.tabs.remove(ids);
+  }
+
+  await storageSet({
+    [LAST_ACTION_KEY]: {
+      type: "close-cross-window-duplicates",
+      timestamp: Date.now(),
+      closedTabs: closeTabs,
+      groupedTabIds: []
+    }
+  });
+
+  return {
+    closed: closeTabs.length
   };
 }
 
@@ -698,32 +807,49 @@ async function closeTabsByIds(tabIds) {
 }
 
 async function clearExtensionData() {
-  await storageRemove([ACTIVITY_KEY, LAST_ACTION_KEY, BOOKMARK_PREFS_KEY]);
+  await storageRemove([ACTIVITY_KEY, LAST_ACTION_KEY, BOOKMARK_PREFS_KEY, TIME_TRACKING_KEY]);
   await storageSet({ [SETTINGS_KEY]: DEFAULT_SETTINGS });
   return { ok: true };
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
   await setSettings(DEFAULT_SETTINGS);
+  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_PERIOD_MINUTES });
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== HEARTBEAT_ALARM) {
+    return;
+  }
+  const tabId = await getActiveTabId();
+  if (tabId !== null) {
+    await tickActiveTab(tabId);
+  }
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   const settings = await getSettings();
   await cleanupActivity(settings.retentionDays);
+  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_PERIOD_MINUTES });
 });
 
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+chrome.tabs.onActivated.addListener(async ({ tabId, previousTabId }) => {
   try {
+    if (previousTabId) {
+      await tickActiveTab(previousTabId);
+    }
     const tab = await chrome.tabs.get(tabId);
     await upsertActivityForTab(tab, true);
+    await tickActiveTab(tabId);
   } catch (_err) {
     // Ignore transient tab activation errors.
   }
 });
 
-chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete") {
     await upsertActivityForTab(tab, true);
+    await tickActiveTab(tabId);
   }
 });
 
@@ -740,6 +866,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return { ok: true, data: await organizeNow() };
       case "CLOSE_DUPLICATES_ONLY":
         return { ok: true, data: await closeDuplicatesOnly() };
+      case "CLOSE_CROSS_WINDOW_DUPLICATES":
+        return { ok: true, data: await closeCrossWindowDuplicates() };
       case "UNDO_LAST_ACTION":
         return { ok: true, data: await undoLastAction() };
       case "GET_SETTINGS":
@@ -765,6 +893,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         };
       case "CLEAR_EXTENSION_DATA":
         return { ok: true, data: await clearExtensionData() };
+      case "GET_TIME_REPORT":
+        return { ok: true, data: await getTimeReport() };
       default:
         return { ok: false, error: `Unknown message type: ${message.type}` };
     }
