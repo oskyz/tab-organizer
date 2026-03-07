@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Tab Organizer - Settings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="options">
+    <h1>Smart Tab Organizer Settings</h1>
+    <form id="settingsForm">
+      <label>
+        <input type="checkbox" id="includePinnedTabs">
+        Include pinned tabs in organize/deduplicate actions
+      </label>
+
+      <label>
+        Bookmark threshold count
+        <input type="number" id="bookmarkThresholdCount" min="1" max="100" required>
+      </label>
+
+      <label>
+        Bookmark threshold days
+        <input type="number" id="bookmarkThresholdDays" min="1" max="365" required>
+      </label>
+
+      <label>
+        Activity retention days
+        <input type="number" id="retentionDays" min="1" max="365" required>
+      </label>
+
+      <label>
+        Excluded URL patterns (one per line)
+        <textarea id="excludedPatterns" rows="8"></textarea>
+      </label>
+
+      <section class="actions">
+        <button type="submit" class="primary">Save Settings</button>
+        <button type="button" id="clearDataBtn">Delete Extension Data</button>
+      </section>
+    </form>
+    <p id="settingsStatus"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
