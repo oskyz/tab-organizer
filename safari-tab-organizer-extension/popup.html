@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Tab Organizer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="popup">
+    <h1>Smart Tab Organizer</h1>
+
+    <section class="summary-grid" id="summaryGrid"></section>
+
+    <section class="actions">
+      <button id="organizeNowBtn" class="primary">Organize Now</button>
+      <button id="closeDuplicatesBtn">Close Duplicates Only</button>
+      <button id="undoBtn">Undo Last Action</button>
+      <button id="refreshBtn">Refresh</button>
+    </section>
+
+    <section class="panel">
+      <h2>Duplicate Candidates</h2>
+      <div id="duplicatesList" class="list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Proposed Groups</h2>
+      <div id="groupsList" class="list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Bookmark Suggestions</h2>
+      <div class="bookmark-controls">
+        <label for="folderSelect">Save to folder</label>
+        <select id="folderSelect"></select>
+        <button id="newFolderBtn">Create Folder</button>
+      </div>
+      <div id="bookmarkList" class="list"></div>
+      <button id="bookmarkSelectedBtn" class="primary">Bookmark Selected</button>
+    </section>
+
+    <section class="panel">
+      <h2>Recently Accessed Tabs</h2>
+      <div id="recentTabsList" class="list"></div>
+    </section>
+
+    <footer>
+      <a href="options.html" target="_blank" rel="noreferrer">Settings</a>
+      <p id="status"></p>
+    </footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
