@@ -17,6 +17,19 @@ function sendMessage(type, payload = {}) {
   });
 }
 
+function formatDuration(ms) {
+  if (!ms || ms < 1000) {
+    return "< 1m";
+  }
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  }
+  return `${minutes}m`;
+}
+
 function formatTime(ts) {
   if (!ts) {
     return "n/a";
@@ -35,17 +48,41 @@ function setStatus(message, isError = false) {
   statusEl.style.color = isError ? "#b91c1c" : "#0f766e";
 }
 
-function renderSummary(summary) {
+function renderSummary(summary, contextsTracked) {
   const container = document.getElementById("summaryGrid");
   const cards = [
     ["Open Tabs", summary.openTabs],
     ["Duplicates", summary.duplicateTabCount],
     ["Groups", summary.proposedGroups],
     ["Bookmark Suggestions", summary.bookmarkSuggestions],
-    ["Low-Use Tabs", summary.lowUseRecommendations]
+    ["Low-Use Tabs", summary.lowUseRecommendations],
+    ["Contexts Tracked", contextsTracked]
   ];
   container.innerHTML = cards
     .map(([label, value]) => `<article class="card"><strong>${value}</strong><span>${label}</span></article>`)
+    .join("");
+}
+
+function renderTimeTracking(report) {
+  const root = document.getElementById("timeTrackingList");
+  if (!report || !report.length) {
+    root.innerHTML = '<div class="item">No time tracked yet.</div>';
+    return;
+  }
+  const maxMs = report[0].totalMs || 1;
+  root.innerHTML = report
+    .slice(0, 30)
+    .map((entry) => {
+      const pct = Math.round((entry.totalMs / maxMs) * 100);
+      const todayText = entry.dailyMs > 0 ? `${formatDuration(entry.dailyMs)} today · ` : "";
+      return `
+        <div class="item">
+          <div><strong>${truncate(entry.label, 60)}</strong></div>
+          <div class="time-meta">${todayText}${formatDuration(entry.totalMs)} total</div>
+          <div class="time-bar-wrap"><div class="time-bar" style="width:${pct}%"></div></div>
+        </div>
+      `;
+    })
     .join("");
 }
 
@@ -159,14 +196,15 @@ let state = {
 
 async function refresh() {
   setStatus("Refreshing...");
-  const [overview, folders] = await Promise.all([
+  const [overview, folders, timeReport] = await Promise.all([
     sendMessage("GET_OVERVIEW"),
-    sendMessage("GET_BOOKMARK_FOLDERS")
+    sendMessage("GET_BOOKMARK_FOLDERS"),
+    sendMessage("GET_TIME_REPORT")
   ]);
   state.overview = overview;
   state.folders = folders;
 
-  renderSummary(overview.summary);
+  renderSummary(overview.summary, timeReport.length);
   renderDuplicates(overview.duplicates);
   renderGroups(overview.groups);
   renderRecentTabs(overview.recentTabs);
@@ -175,6 +213,7 @@ async function refresh() {
     overview.lowUseRecommendations,
     overview.settings?.lowUseLookbackMonths ?? 30
   );
+  renderTimeTracking(timeReport);
 
   const lastFolderId = overview.bookmarkPrefs?.lastFolderId || "1";
   populateFolderSelect(folders, lastFolderId);
