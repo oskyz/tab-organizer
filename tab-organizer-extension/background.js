@@ -2,15 +2,21 @@
 
 const SETTINGS_KEY = "settings";
 const ACTIVITY_KEY = "tabActivity";
+const RULES_KEY = "rules";
 const LAST_ACTION_KEY = "lastAction";
 const BOOKMARK_PREFS_KEY = "bookmarkPrefs";
 const TIME_TRACKING_KEY = "timeTracking";
+const REOPEN_SUGGESTIONS_KEY = "reopenSuggestions";
+const REOPEN_TTL_MS = 5 * 60 * 1000;
 
 const HEARTBEAT_ALARM = "timeTrackingHeartbeat";
 const HEARTBEAT_PERIOD_MINUTES = 0.5;
+const DAILY_RULES_ALARM = "dailyRulesApply";
+const DAILY_RULES_PERIOD_MINUTES = 24 * 60;
 
 const DEFAULT_SETTINGS = {
   includePinnedTabs: false,
+  autoApplyRules: false,
   bookmarkThresholdCount: 5,
   bookmarkThresholdDays: 14,
   lowUseLookbackMonths: 30,
@@ -560,6 +566,7 @@ async function closeDuplicatesOnly() {
       groupedTabIds: []
     }
   });
+  await saveReopenSuggestions(closeTabs, "duplicate tabs");
 
   return {
     closed: closeTabs.length
@@ -606,6 +613,7 @@ async function organizeNow() {
       groupedTabIds
     }
   });
+  await saveReopenSuggestions(closeTabs, "organized tabs");
 
   return {
     closed: closeTabs.length,
@@ -633,6 +641,7 @@ async function closeCrossWindowDuplicates() {
       groupedTabIds: []
     }
   });
+  await saveReopenSuggestions(closeTabs, "cross-window duplicate tabs");
 
   return {
     closed: closeTabs.length
@@ -802,28 +811,223 @@ async function closeTabsByIds(tabIds) {
       groupedTabIds: []
     }
   });
+  await saveReopenSuggestions(closedTabs, "low-use tabs");
 
   return { closed: closedTabs.length };
 }
 
+async function saveReopenSuggestions(closedTabs, label) {
+  if (!Array.isArray(closedTabs) || closedTabs.length < 2) {
+    return;
+  }
+  await storageSet({
+    [REOPEN_SUGGESTIONS_KEY]: {
+      tabs: closedTabs,
+      label: label || "closed tabs",
+      timestamp: Date.now()
+    }
+  });
+}
+
+async function getReopenSuggestions() {
+  const data = await storageGet([REOPEN_SUGGESTIONS_KEY]);
+  const record = data[REOPEN_SUGGESTIONS_KEY];
+  if (!record || !record.timestamp) {
+    return null;
+  }
+  const ageMs = Date.now() - record.timestamp;
+  if (ageMs > REOPEN_TTL_MS) {
+    await storageRemove([REOPEN_SUGGESTIONS_KEY]);
+    return null;
+  }
+  return record;
+}
+
+async function dismissReopenSuggestions() {
+  await storageRemove([REOPEN_SUGGESTIONS_KEY]);
+  return { ok: true };
+}
+
+async function restoreReopenSuggestions() {
+  const data = await storageGet([REOPEN_SUGGESTIONS_KEY]);
+  const record = data[REOPEN_SUGGESTIONS_KEY];
+  if (!record || !Array.isArray(record.tabs)) {
+    return { restored: 0, ok: false };
+  }
+  let restored = 0;
+  for (const tab of record.tabs) {
+    const createInfo = { url: tab.url, active: false };
+    if (Number.isInteger(tab.windowId)) {
+      createInfo.windowId = tab.windowId;
+    }
+    if (Number.isInteger(tab.index)) {
+      createInfo.index = tab.index;
+    }
+    if (tab.pinned) {
+      createInfo.pinned = true;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await chrome.tabs.create(createInfo);
+      restored += 1;
+    } catch (_err) {
+      // Best-effort restore; continue with next tab.
+    }
+  }
+  await storageRemove([REOPEN_SUGGESTIONS_KEY]);
+  return { restored, ok: true };
+}
+
+async function getRules() {
+  const data = await storageGet([RULES_KEY]);
+  return Array.isArray(data[RULES_KEY]) ? data[RULES_KEY] : [];
+}
+
+async function saveRules(rules) {
+  await storageSet({ [RULES_KEY]: Array.isArray(rules) ? rules : [] });
+  return rules;
+}
+
+function matchesCondition(condition, tab, activityEntry) {
+  const { field, operator, value } = condition;
+  const now = Date.now();
+
+  if (field === "inactivity") {
+    const lastSeen = (activityEntry && activityEntry.lastSeen) || tab.lastAccessed || 0;
+    const thresholdMs = Number(value) * 24 * 60 * 60 * 1000;
+    return lastSeen > 0 && (now - lastSeen) > thresholdMs;
+  }
+
+  let target = "";
+  if (field === "domain") {
+    const parsed = safeUrl(tab.url || "");
+    target = parsed ? parsed.hostname.replace(/^www\./, "") : "";
+  } else if (field === "url") {
+    target = tab.url || "";
+  } else if (field === "title") {
+    target = (tab.title || "").toLowerCase();
+  }
+
+  const needle = field === "title" ? String(value).toLowerCase() : String(value);
+
+  if (operator === "contains") {
+    return target.includes(needle);
+  }
+  if (operator === "equals") {
+    return target === needle;
+  }
+  if (operator === "startsWith") {
+    return target.startsWith(needle);
+  }
+  return false;
+}
+
+function matchesRule(rule, tab, activityEntry) {
+  if (!Array.isArray(rule.conditions) || rule.conditions.length === 0) {
+    return false;
+  }
+  return rule.conditions.every((condition) => matchesCondition(condition, tab, activityEntry));
+}
+
+async function applyRules() {
+  const settings = await getSettings();
+  const rules = await getRules();
+  const enabledRules = rules.filter((r) => r.enabled);
+
+  if (!enabledRules.length) {
+    return { grouped: 0, archived: 0, matched: 0 };
+  }
+
+  const tabs = await getAllTabs();
+  const activityData = await storageGet([ACTIVITY_KEY]);
+  const activity = activityData[ACTIVITY_KEY] || {};
+
+  const assignments = new Map();
+
+  for (const tab of tabs) {
+    if (!settings.includePinnedTabs && tab.pinned) {
+      continue;
+    }
+    const normalized = normalizeUrl(tab.url || "");
+    const activityEntry = normalized ? activity[normalized] : null;
+
+    for (const rule of enabledRules) {
+      if (matchesRule(rule, tab, activityEntry)) {
+        let groupName;
+        let color;
+        let collapsed = false;
+
+        if (rule.action.type === "archive") {
+          groupName = "Archive";
+          color = "grey";
+          collapsed = true;
+        } else {
+          groupName = (rule.action.groupName || "Untitled").slice(0, 80);
+          color = rule.action.color || chooseGroupColor(groupName);
+        }
+
+        if (!assignments.has(groupName)) {
+          assignments.set(groupName, { tabIds: [], color, collapsed });
+        }
+        assignments.get(groupName).tabIds.push(tab.id);
+        break;
+      }
+    }
+  }
+
+  let grouped = 0;
+  let archived = 0;
+  let matched = 0;
+
+  for (const [groupName, { tabIds, color, collapsed }] of assignments.entries()) {
+    if (!tabIds.length) {
+      continue;
+    }
+    matched += tabIds.length;
+    const groupId = await chrome.tabs.group({ tabIds });
+    await chrome.tabGroups.update(groupId, {
+      title: groupName,
+      color,
+      collapsed
+    });
+    if (collapsed) {
+      archived += tabIds.length;
+    } else {
+      grouped += tabIds.length;
+    }
+  }
+
+  return { grouped, archived, matched, groups: assignments.size };
+}
+
 async function clearExtensionData() {
-  await storageRemove([ACTIVITY_KEY, LAST_ACTION_KEY, BOOKMARK_PREFS_KEY, TIME_TRACKING_KEY]);
+  await storageRemove([ACTIVITY_KEY, LAST_ACTION_KEY, BOOKMARK_PREFS_KEY, TIME_TRACKING_KEY, REOPEN_SUGGESTIONS_KEY]);
   await storageSet({ [SETTINGS_KEY]: DEFAULT_SETTINGS });
   return { ok: true };
+}
+
+async function syncDailyRulesAlarm(settings) {
+  if (settings.autoApplyRules) {
+    chrome.alarms.create(DAILY_RULES_ALARM, { periodInMinutes: DAILY_RULES_PERIOD_MINUTES });
+  } else {
+    chrome.alarms.clear(DAILY_RULES_ALARM);
+  }
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
   await setSettings(DEFAULT_SETTINGS);
   chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_PERIOD_MINUTES });
+  await syncDailyRulesAlarm(DEFAULT_SETTINGS);
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== HEARTBEAT_ALARM) {
-    return;
-  }
-  const tabId = await getActiveTabId();
-  if (tabId !== null) {
-    await tickActiveTab(tabId);
+  if (alarm.name === HEARTBEAT_ALARM) {
+    const tabId = await getActiveTabId();
+    if (tabId !== null) {
+      await tickActiveTab(tabId);
+    }
+  } else if (alarm.name === DAILY_RULES_ALARM) {
+    await applyRules();
   }
 });
 
@@ -831,6 +1035,7 @@ chrome.runtime.onStartup.addListener(async () => {
   const settings = await getSettings();
   await cleanupActivity(settings.retentionDays);
   chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_PERIOD_MINUTES });
+  await syncDailyRulesAlarm(settings);
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId, previousTabId }) => {
@@ -872,8 +1077,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return { ok: true, data: await undoLastAction() };
       case "GET_SETTINGS":
         return { ok: true, data: await getSettings() };
-      case "SAVE_SETTINGS":
-        return { ok: true, data: await setSettings(message.data || {}) };
+      case "SAVE_SETTINGS": {
+        const saved = await setSettings(message.data || {});
+        await syncDailyRulesAlarm(saved);
+        return { ok: true, data: saved };
+      }
       case "GET_BOOKMARK_FOLDERS":
         return { ok: true, data: await getBookmarkFolders() };
       case "CREATE_BOOKMARK_FOLDER":
@@ -891,10 +1099,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           ok: true,
           data: await closeTabsByIds(message.tabIds || [])
         };
+      case "GET_RULES":
+        return { ok: true, data: await getRules() };
+      case "SAVE_RULES":
+        return { ok: true, data: await saveRules(message.rules || []) };
+      case "APPLY_RULES":
+        return { ok: true, data: await applyRules() };
       case "CLEAR_EXTENSION_DATA":
         return { ok: true, data: await clearExtensionData() };
       case "GET_TIME_REPORT":
         return { ok: true, data: await getTimeReport() };
+      case "GET_REOPEN_SUGGESTIONS":
+        return { ok: true, data: await getReopenSuggestions() };
+      case "DISMISS_REOPEN_SUGGESTIONS":
+        return { ok: true, data: await dismissReopenSuggestions() };
+      case "RESTORE_REOPEN_SUGGESTIONS":
+        return { ok: true, data: await restoreReopenSuggestions() };
       default:
         return { ok: false, error: `Unknown message type: ${message.type}` };
     }

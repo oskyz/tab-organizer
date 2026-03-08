@@ -128,6 +128,25 @@ function renderGroups(groups) {
     .join("");
 }
 
+function renderReopenBanner(suggestion) {
+  const banner = document.getElementById("reopenBanner");
+  if (!suggestion || !Array.isArray(suggestion.tabs) || !suggestion.tabs.length) {
+    banner.hidden = true;
+    return;
+  }
+  document.getElementById("reopenBannerLabel").textContent =
+    `${suggestion.tabs.length} ${suggestion.label}`;
+  const listEl = document.getElementById("reopenBannerList");
+  listEl.innerHTML = suggestion.tabs
+    .slice(0, 10)
+    .map((tab) => `<div class="reopen-banner-item">${truncate(tab.title || tab.url, 65)}</div>`)
+    .join("");
+  if (suggestion.tabs.length > 10) {
+    listEl.innerHTML += `<div class="reopen-banner-item reopen-banner-more">…and ${suggestion.tabs.length - 10} more</div>`;
+  }
+  banner.hidden = false;
+}
+
 function renderRecentTabs(tabs) {
   const root = document.getElementById("recentTabsList");
   if (!tabs.length) {
@@ -208,10 +227,11 @@ let state = {
 
 async function refresh() {
   setStatus("Refreshing...");
-  const [overview, folders, timeReport] = await Promise.all([
+  const [overview, folders, timeReport, reopenSuggestion] = await Promise.all([
     sendMessage("GET_OVERVIEW"),
     sendMessage("GET_BOOKMARK_FOLDERS"),
-    sendMessage("GET_TIME_REPORT")
+    sendMessage("GET_TIME_REPORT"),
+    sendMessage("GET_REOPEN_SUGGESTIONS")
   ]);
   state.overview = overview;
   state.folders = folders;
@@ -226,6 +246,7 @@ async function refresh() {
     overview.settings?.lowUseLookbackMonths ?? 30
   );
   renderTimeTracking(timeReport);
+  renderReopenBanner(reopenSuggestion);
 
   const lastFolderId = overview.bookmarkPrefs?.lastFolderId || "1";
   populateFolderSelect(folders, lastFolderId);
@@ -372,6 +393,22 @@ function bindEvents() {
   });
   document.getElementById("deselectLowUseBtn").addEventListener("click", () => {
     deselectAllLowUse();
+  });
+  document.getElementById("reopenRestoreBtn").addEventListener("click", () => {
+    sendMessage("RESTORE_REOPEN_SUGGESTIONS")
+      .then((result) => {
+        setStatus(`Restored ${result.restored} tab(s).`);
+        return refresh();
+      })
+      .catch((err) => setStatus(err.message, true));
+  });
+  document.getElementById("reopenDismissBtn").addEventListener("click", () => {
+    sendMessage("DISMISS_REOPEN_SUGGESTIONS")
+      .then(() => {
+        document.getElementById("reopenBanner").hidden = true;
+        setStatus("Suggestion dismissed.");
+      })
+      .catch((err) => setStatus(err.message, true));
   });
 }
 

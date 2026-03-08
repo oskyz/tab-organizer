@@ -16,6 +16,11 @@
       </label>
 
       <label>
+        <input type="checkbox" id="autoApplyRules">
+        Auto-apply rules once a day (in the background)
+      </label>
+
+      <label>
         Bookmark threshold count
         <input type="number" id="bookmarkThresholdCount" min="1" max="100" required>
       </label>
@@ -52,6 +57,20 @@
     </form>
     <p id="settingsStatus"></p>
   </main>
+
+  <main class="options">
+    <h1>Auto-Organizer Rules</h1>
+    <p class="rules-description">Rules are evaluated in order. The first matching rule wins. Pinned tabs follow the "Include pinned tabs" setting above.</p>
+
+    <div id="rulesList"></div>
+
+    <section class="actions">
+      <button type="button" id="addRuleBtn" class="primary">Add Rule</button>
+      <button type="button" id="applyRulesBtn">Apply Rules Now</button>
+    </section>
+    <p id="rulesStatus"></p>
+  </main>
+
   <script src="options.js"></script>
 </body>
 </html>
