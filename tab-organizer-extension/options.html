@@ -8,47 +8,78 @@
 </head>
 <body>
   <main class="options">
-    <h1>Smart Tab Organizer Settings</h1>
+    <h1>Smart Tab Organizer — Settings</h1>
     <form id="settingsForm">
-      <label>
-        <input type="checkbox" id="includePinnedTabs">
-        Include pinned tabs in organize/deduplicate actions
-      </label>
 
-      <label>
-        <input type="checkbox" id="autoApplyRules">
-        Auto-apply rules once a day (in the background)
-      </label>
+      <fieldset class="settings-group">
+        <legend>General</legend>
 
-      <label>
-        Bookmark threshold count
-        <input type="number" id="bookmarkThresholdCount" min="1" max="100" required>
-      </label>
+        <div class="setting-row">
+          <label class="setting-label checkbox-label">
+            <input type="checkbox" id="includePinnedTabs">
+            <span>Include pinned tabs</span>
+          </label>
+          <p class="setting-hint">When checked, pinned tabs are also considered when closing duplicates, grouping, and applying rules. Leave unchecked to keep pinned tabs untouched.</p>
+        </div>
 
-      <label>
-        Bookmark threshold days
-        <input type="number" id="bookmarkThresholdDays" min="1" max="365" required>
-      </label>
+        <div class="setting-row">
+          <label class="setting-label checkbox-label">
+            <input type="checkbox" id="autoApplyRules">
+            <span>Auto-apply rules once a day</span>
+          </label>
+          <p class="setting-hint">Automatically runs your Auto-Organizer Rules in the background every 24 hours. Rules can also be triggered manually from the Rules section below.</p>
+        </div>
+      </fieldset>
 
-      <label>
-        Low-use lookback months
-        <input type="number" id="lowUseLookbackMonths" min="1" max="120" required>
-      </label>
+      <fieldset class="settings-group">
+        <legend>Bookmark Suggestions</legend>
+        <p class="settings-group-desc">The extension scans your browsing history and suggests pages worth bookmarking based on how often you visit them.</p>
 
-      <label>
-        Low-use max visits (recommend at or below)
-        <input type="number" id="lowUseMaxVisitCount" min="0" max="100" required>
-      </label>
+        <div class="setting-row">
+          <label class="setting-label" for="bookmarkThresholdCount">Minimum visit count</label>
+          <input type="number" id="bookmarkThresholdCount" min="1" max="100" required>
+          <p class="setting-hint">A page must be visited at least this many times within the lookback window to appear as a bookmark suggestion. Default: 5.</p>
+        </div>
 
-      <label>
-        Activity retention days
-        <input type="number" id="retentionDays" min="1" max="365" required>
-      </label>
+        <div class="setting-row">
+          <label class="setting-label" for="bookmarkThresholdDays">Lookback window (days)</label>
+          <input type="number" id="bookmarkThresholdDays" min="1" max="365" required>
+          <p class="setting-hint">How far back in your history to look for frequently visited pages. Default: 14 days.</p>
+        </div>
+      </fieldset>
 
-      <label>
-        Excluded URL patterns (one per line)
-        <textarea id="excludedPatterns" rows="8"></textarea>
-      </label>
+      <fieldset class="settings-group">
+        <legend>Low-Use Tab Detection</legend>
+        <p class="settings-group-desc">Identifies open tabs you rarely visit so you can bookmark or close them to reduce clutter.</p>
+
+        <div class="setting-row">
+          <label class="setting-label" for="lowUseLookbackMonths">Lookback window (months)</label>
+          <input type="number" id="lowUseLookbackMonths" min="1" max="120" required>
+          <p class="setting-hint">How far back to check visit history when deciding if a tab is low-use. Default: 30 months.</p>
+        </div>
+
+        <div class="setting-row">
+          <label class="setting-label" for="lowUseMaxVisitCount">Max visits to flag as low-use</label>
+          <input type="number" id="lowUseMaxVisitCount" min="0" max="100" required>
+          <p class="setting-hint">Tabs visited this many times or fewer within the lookback window are flagged as low-use. Default: 2.</p>
+        </div>
+      </fieldset>
+
+      <fieldset class="settings-group">
+        <legend>Data &amp; Privacy</legend>
+
+        <div class="setting-row">
+          <label class="setting-label" for="retentionDays">Activity retention (days)</label>
+          <input type="number" id="retentionDays" min="1" max="365" required>
+          <p class="setting-hint">How long the extension keeps internal tab activity records. Older records are pruned automatically. Default: 30 days.</p>
+        </div>
+
+        <div class="setting-row">
+          <label class="setting-label" for="excludedPatterns">Excluded URL patterns</label>
+          <textarea id="excludedPatterns" rows="6"></textarea>
+          <p class="setting-hint">One pattern per line. Any URL containing a listed pattern is ignored by bookmark suggestions and low-use detection. Useful for login pages, OAuth flows, or internal tools.</p>
+        </div>
+      </fieldset>
 
       <section class="actions">
         <button type="submit" class="primary">Save Settings</button>
